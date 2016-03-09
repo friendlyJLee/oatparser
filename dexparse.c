@@ -58,6 +58,7 @@ const char * OAT_CLASS_TYPE[3] = {
 
 extern uchar* file_begin;
 extern uchar* file_end;
+//extern uchar *oatexec = NULL;
 
 int readUnsignedLeb128(uchar** pStream)
 {
@@ -182,6 +183,7 @@ void getProtoDesc(uchar* dex, struct StringID *strIdList,
 		struct ProtoID* protoIdList, uint offset_pointer,
 		uchar* returnType, uchar* shorty, uchar* params){
 	uint strIdOff, p, *tmp;
+	struct DexTypeList *type_list;
 	if (offset_pointer){
 		strIdOff = strIdList[typeIdList[protoIdList[offset_pointer].returnTypeId].descriptorId].stringDataOff; 
 		getUnsignedLebValue(dex, returnType, strIdOff);
@@ -190,8 +192,8 @@ void getProtoDesc(uchar* dex, struct StringID *strIdList,
 		if( protoIdList[offset_pointer].parametersOff == 0)
 			p = 0;
 		else {
-			tmp = (uint*)&dex[protoIdList[offset_pointer].parametersOff];
-			p = *tmp;
+			type_list = (struct DexFileList*)(dex + protoIdList[offset_pointer].parametersOff);
+			p = type_list->list->typeId;
 		}
 		strIdOff = strIdList[typeIdList[p].descriptorId].stringDataOff;
 		getUnsignedLebValue(dex, params, strIdOff);
@@ -500,8 +502,7 @@ bool dexFileParse(uchar* dexBuf, uint size) {
 	}
 	printf("Finished.\n");
 }
-#endif
-uint getCodeOffset(ushort type, uchar* bitmap, uint* offsets, uint mid, uint cid) {
+uint getCodeOffset1(ushort type, uchar* bitmap, uint* offsets, uint mid, uint cid) {
 	uint	i, j;
 	uchar b;
 	if(type == 2) // none compiled
@@ -514,13 +515,39 @@ uint getCodeOffset(ushort type, uchar* bitmap, uint* offsets, uint mid, uint cid
 		if( (b & (0x80 >> i)) == 0 )
 			return 0;
 	}
-	// printf("%d %d 0x%x (0x%x)  0x%x  0x%x\n", j, i,
-	//		b, (0x80>>i), mid, cid);
 	return offsets[cid];
 }
 
+#endif
+uint getCodeOffset(ushort type, uchar* bitmap, uint* offsets, uint mid, uint *nid) {
+	uint	i, j, m, n, cid = mid;
+	uchar b;
+	if(type == 2) // none compiled
+		return 0;
+	assert(offsets);
+	i = mid % 8;
+	j = mid / 8;
+	if(type == 1) {
+		b = bitmap[j];
+		if( (b & (0x1 << i)) == 0 )
+			return 0;
+		cid = 0;
+		for(m = 0; m < j; m++)
+		{
+			for(n = 0; n < sizeof(uchar) * 8; n++)
+				if(bitmap[m] & (0x1 << n))
+					cid++;
+		}
+		for(n = 0; n < i; n++)
+			if(bitmap[j] & (0x1 << n))
+				cid++;
+	}
+	*nid = cid;
+	return offsets[cid];
+}
 
-bool oatDexClassParse(uchar*dexBuf, uint offset,
+bool oatDexClassParse(uchar* oatdata, 
+		uchar* dexBuf, uint offset,
 		struct OatClassHeader *oat_class_header,
 		struct StringID *string_id_list,
 		struct TypeID *type_id_list,
@@ -633,9 +660,9 @@ bool oatDexClassParse(uchar*dexBuf, uint offset,
 		printf("( %s )\n", str);
 	}
 #endif
-	printf("\tannotations_off=0x%x\n", class_def_item->annotationsOff);
-	printf("\tclass_data_off=0x%x (%d)\n", class_def_item->classDataOff, class_def_item->classDataOff);
-	printf("\tstatic_values_off=0x%x (%d)\n", class_def_item->staticValuesOff, class_def_item->staticValuesOff);
+	printf("\tannotations_off=0x%08x\n", class_def_item->annotationsOff);
+	printf("\tclass_data_off=0x%08x (%d)\n", class_def_item->classDataOff, class_def_item->classDataOff);
+	printf("\tstatic_values_off=0x%08x (%d)\n", class_def_item->staticValuesOff, class_def_item->staticValuesOff);
 	/* change position to classDataOff */
 	if (class_def_item->classDataOff == 0) {
 		if (DEBUG) {
@@ -688,8 +715,8 @@ bool oatDexClassParse(uchar*dexBuf, uint offset,
 		
 		if(DEBUG) {
 			getTypeDesc(dexBuf, string_id_list, type_id_list, type_idx, typeDesc);
-			printf ("\t\t[%d]: %s %s\t|--field_idx_diff='0x%x' |", i, typeDesc, str, field_idx_diff);
-			printf (" |--field_access_flags='0x%x' : %s\n",field_access_flags,
+			printf ("\t\t[%d]: %s %s\t|--field_idx_diff='0x%08x' |", i, typeDesc, str, field_idx_diff);
+			printf (" |--field_access_flags='0x%08x' : %s\n",field_access_flags,
 					parseAccessFlags(field_access_flags));
 		}
 	}
@@ -712,8 +739,8 @@ bool oatDexClassParse(uchar*dexBuf, uint offset,
 		
 		if (DEBUG) {
 			getTypeDesc(dexBuf, string_id_list, type_id_list, type_idx, typeDesc);
-			printf ("\t\t[%d]: %s %s |--field_idx_diff='0x%x'", i, typeDesc, str, field_idx_diff);
-			printf (" |--field_access_flags='0x%x': %s\n",field_access_flags,
+			printf ("\t\t[%d]: %s %s |--field_idx_diff='0x%08x'", i, typeDesc, str, field_idx_diff);
+			printf (" |--field_access_flags='0x%08x': %s\n",field_access_flags,
 					parseAccessFlags(field_access_flags));
 		}
 	}
@@ -749,28 +776,38 @@ bool oatDexClassParse(uchar*dexBuf, uint offset,
 		//getTypeDesc(dexBuf, string_id_list, proto_id_list, class_idx, typeDesc);
 		getProtoDesc(dexBuf, string_id_list, type_id_list, proto_id_list,
 				proto_idx, returnType, shorty, params);
-		printf ("\tdirect method %d (method_id_idx=%d): %s %s(%s) %s\n",i+1, key,
-				returnType, str, shorty, params);
+		printf ("\tDirect method %d (method_id_idx=%d): %s, %s %s(%s) %s\n",i, key,
+				parseAccessFlags(method_access_flags),
+				returnType, str, params, shorty);
 
 		native_code_offset = getCodeOffset(oat_class_header->type, bitmap, methods_offsets,
-				total_methods, native_methods);
-		total_methods++;
+				total_methods, &native_methods);
+		
 		if(native_code_offset > 0)
 		{
-			printf("\t\tnative_code_off=0x%x\n", native_code_offset);
-			native_methods++;
-			oat_mth_header = (struct OatQuickMethodHeader*)(file_begin+native_code_offset-0x1c);
-			printf("\t\t\tgc_map: 0x%x\n", oat_mth_header->gcMapOffset);
-			printf("\t\t\tsize: %d\n", oat_mth_header->codeSize);
+			printf("\t\tOatMethodOffsets=0x%08x\n", (uchar*)methods_offsets-oatdata+native_methods*sizeof(uint));
+			printf("\t\t\tnative_code_off: 0x%08x\n", native_code_offset);
+			oat_mth_header = (struct OatQuickMethodHeader*)(oatdata+(native_code_offset&~0x1)-sizeof(struct OatQuickMethodHeader));
+			printf("\t\tOatQuickMethodHeader=0x%08x\n", (uchar*)oat_mth_header - oatdata);
+			printf("\t\t\tgcmap_table_offset: 0x%08x\n", oat_mth_header->gcMapOffset);
+			printf("\t\t\tmapping_table_offset: 0x%08x\n", oat_mth_header->mappingTableOffset);
+			printf("\t\t\tvmap_table_offset: 0x%08x\n", oat_mth_header->vmapTableOffset);
+			printf("\t\t\tcode_size_offset: 0x%08x\n", (uchar*)&oat_mth_header->codeSize-oatdata);
+			printf("\t\t\tcode_size: 0x%08x\n", oat_mth_header->codeSize);
+			printf("\t\tQuickMethodFrameInfo: \n");
+			printf("\t\t\tframe_size_in_bytes: 0x%08x\n", oat_mth_header->frameSizeInBytes);
+			printf("\t\t\tcore_spill_mask: 0x%08x\n", oat_mth_header->coreSpillMask);
+			printf("\t\t\tfp_spill_mask: 0x%08x\n", oat_mth_header->fpSpillMask);
 		}
 
-		if (DEBUG) {
-			printf("\t\tmethod_code_off=0x%x\n", method_code_off);
-			printf("\t\tmethod_access_flags='0x%x': %s\n", method_access_flags,
+		if (0) {
+			printf("\t\tmethod_code_off=0x%08x\n", method_code_off);
+			printf("\t\tmethod_access_flags=0x%08x: %s\n", method_access_flags,
 					parseAccessFlags(method_access_flags));
-			printf("\t\tclass_idx='0x%x'\n", class_idx);
-			printf("\t\tproto_idx=0x%x\n", proto_idx);
+			printf("\t\tclass_idx=0x%08x\n", class_idx);
+			printf("\t\tproto_idx=0x%08x\n", proto_idx);
 		}
+		total_methods++;
 	}
 	if (DEBUG) printf ("\t%d virtual methods\n", virtual_methods_size);
 
@@ -801,26 +838,35 @@ bool oatDexClassParse(uchar*dexBuf, uint offset,
 		//getTypeDesc(dexBuf, string_id_list,type_id_list,class_idx, typeDesc);
 		getProtoDesc(dexBuf, string_id_list, type_id_list, proto_id_list,
 				proto_idx, returnType, shorty, params);
-		printf ("\tvirtual method %d (method_id_idx=%d): %s %s(%s) %s\n",i+1, key,
-				returnType, str, shorty, params);
+		printf ("\tvirtual method %d (method_id_idx=%d): %s %s %s(%s) %s\n",i, key,
+				parseAccessFlags(method_access_flags),
+				returnType, str, params, shorty);
 
 		native_code_offset = getCodeOffset(oat_class_header->type, bitmap, methods_offsets,
-				total_methods, native_methods);
+				total_methods, &native_methods);
 		total_methods++;
 		if(native_code_offset > 0) {
-			printf("\t\tnative_code_off=0x%x\n", native_code_offset);
-			native_methods++;
-			oat_mth_header = (struct OatQuickMethodHeader*)(file_begin+native_code_offset-0x1c);
-			printf("\t\t\tgc_map: 0x%x\n", oat_mth_header->gcMapOffset);
-			printf("\t\t\tsize: %d\n", oat_mth_header->codeSize);
+			printf("\t\tOatMethodOffsets=0x%08x\n", (uchar*)methods_offsets-oatdata+native_methods*sizeof(uint));
+			printf("\t\t\tnative_code_off: 0x%08x\n", native_code_offset);
+			oat_mth_header = (struct OatQuickMethodHeader*)(oatdata+(native_code_offset&~0x1)-sizeof(struct OatQuickMethodHeader));
+			printf("\t\tOatQuickMethodHeader=0x%08x\n", (uchar*)oat_mth_header - oatdata);
+			printf("\t\t\tgcmap_table_offset: 0x%08x\n", oat_mth_header->gcMapOffset);
+			printf("\t\t\tmapping_table_offset: 0x%08x\n", oat_mth_header->mappingTableOffset);
+			printf("\t\t\tvmap_table_offset: 0x%08x\n", oat_mth_header->vmapTableOffset);
+			printf("\t\t\tcode_size_offset: 0x%08x\n", (uchar*)&oat_mth_header->codeSize-oatdata);
+			printf("\t\t\tcode_size: 0x%08x\n", oat_mth_header->codeSize);
+			printf("\t\tQuickMethodFrameInfo: \n");
+			printf("\t\t\tframe_size_in_bytes: 0x%08x\n", oat_mth_header->frameSizeInBytes);
+			printf("\t\t\tcore_spill_mask: 0x%08x\n", oat_mth_header->coreSpillMask);
+			printf("\t\t\tfp_spill_mask: 0x%08x\n", oat_mth_header->fpSpillMask);
 		}
 
-		if (DEBUG) {
-			printf("\t\tmethod_code_off=0x%x\n", method_code_off);
-			printf("\t\tmethod_access_flags='0x%x' %s\n", method_access_flags,
+		if (0) {
+			printf("\t\tmethod_code_off=0x%08x\n", method_code_off);
+			printf("\t\tmethod_access_flags=0x%08x: %s\n", method_access_flags,
 					parseAccessFlags(method_access_flags));	
-			printf("\t\tclass_idx=0x%x\n", class_idx);
-			printf("\t\tproto_idx=0x%x\n", proto_idx);
+			printf("\t\tclass_idx=0x%08x\n", class_idx);
+			printf("\t\tproto_idx=0x%08x\n", proto_idx);
 		}
 	}
 	free(ptr);
@@ -881,13 +927,13 @@ bool oatDexFileParse(uchar* oatdata,
 	method_id_list	= (struct MethodID*)(dexBuf + dh->methodIdsOff);
 	/* Parse class definations */
 	//for(j = 1; j <= 3138/*dh.classDefsSize*/; j++) {
-  for(j = 1; j <= dh->classDefsSize; j++) {
-		printf("Class %d: (offset=0x%08x)", j, oat_class_offsets[j-1].offset);
+  for(j = 0; j < dh->classDefsSize; j++) {
+		printf("Class %d: (offset=0x%08x)", j, oat_class_offsets[j].offset);
 		//offset = dexOffset + dh.classDefsOff + j*sizeof(struct ClassDefine);
-		oat_class_header = (struct OatClassHeader*)(oatdata + oat_class_offsets[j-1].offset);
-		offset = dh->classDefsOff + (j-1)*sizeof(struct ClassDefine);
+		oat_class_header = (struct OatClassHeader*)(oatdata + oat_class_offsets[j].offset);
+		offset = dh->classDefsOff + j*sizeof(struct ClassDefine);
 		assert((uchar*)oat_class_header+sizeof(struct OatClassHeader) < oatdata+size);
-		oatDexClassParse(dexBuf, offset, oat_class_header, 
+		oatDexClassParse(oatdata, dexBuf, offset, oat_class_header, 
 				string_id_list, type_id_list, proto_id_list, 
 				field_id_list, method_id_list);
 	}

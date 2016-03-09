@@ -62,9 +62,15 @@ struct OatQuickMethodHeader {
 	uint mappingTableOffset;
 	uint vmapTableOffset;
 	uint gcMapOffset;
-	uint QuickMethodFrameInfo_frame_size_in_bytes;
-	uint QuickMethodFrameInfo_core_spill_mask;
-	uint QuickMethodFremeInfo_fp_spill_mask;
+	uint frameSizeInBytes;
+	uint coreSpillMask;
+	uint fpSpillMask;
+	uint codeSize;
+};
+
+struct OatMethodHeader {
+	uint mappingTableOffset;
+	uint vmapTableOffset;
 	uint codeSize;
 };
 

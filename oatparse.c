@@ -33,14 +33,15 @@ static char *dyn_str_tbl;
 
 
 struct OatSec os;
-static struct OatHeader *oh;
+struct OatHeader *oh;
 
 uchar* file_begin = NULL, *file_end = NULL;
 
-static uchar *oatexec = NULL;
-static uint  oatexec_offset;
-static uchar *oatdata = NULL;
+uchar *oatdata = NULL;
+uchar *oatexec = NULL;
 static uint  oatdata_offset;
+static uint  oatexec_offset;
+
 static uint getSection(int fd, void* buf, uint offset, uint size) {
 	assert(lseek(fd, (off_t)offset, SEEK_SET) == (off_t)offset);
 	assert(read(fd, buf, size) == size);
@@ -87,8 +88,10 @@ bool OpenOat(int fd) {
 	sh_str = read_section(fd, sh_tbl[eh.e_shstrndx]);
 	for (i = 0; i < eh.e_shnum; i++) {
 		sec = (uchar*)sh_str+sh_tbl[i].sh_name;
-		printf("%s\t\t\t\t0x%08x 0x%08x\n", sec,
-				sh_tbl[i].sh_offset, sh_tbl[i].sh_size);
+		printf("[] 0x%08x 0x%08x %s\n",
+				sh_tbl[i].sh_offset, 
+				sh_tbl[i].sh_size,
+				sec);
 
 		if(strlen(sec) < 5)
 			continue;
@@ -134,33 +137,50 @@ bool oatDexParse(uchar* oatdata, uint offset, uint count) {
 		offset += sizeof(uint);
 		if(dex_file_location_size == 0)
 			return false;
-		printf("location size: %d\n", dex_file_location_size);
+		//printf("location size: %d\n", dex_file_location_size);
 
+		printf("\nDex file info: \n");
 		/* Get dex_file_location_data */
 		memcpy(dex_file_location_data, oatdata+offset, dex_file_location_size);
 		offset += dex_file_location_size;
 		dex_file_location_data[dex_file_location_size] = '\0';
-		printf("%s\n", dex_file_location_data);
+		printf("\tFile data: %s\n", dex_file_location_data);
 
 		/* Get dex_file_checksum */
 		dex_file_checksum = *(uint*)(oatdata + offset);
 		offset += sizeof(uint);
-		printf("checksum: 0x%08x\n", dex_file_checksum);
+		printf("\tDex file checksum: 0x%08x\n", dex_file_checksum);
 
 		/* Get dex_file_offset */
 		dex_file_offset = *(uint*)(oatdata + offset);
 		offset += sizeof(uint);
-		printf("dexoffset: 0x%08x\n", dex_file_offset);
+		printf("\tDex file offset: 0x%08x\n", dex_file_offset);
 
 		classes_offsets = (struct OatClassOffset*)(oatdata + offset);
 
 		/* Get DexFileHeader */
 		dh = (struct DexHeader*)(oatdata + dex_file_offset);
-		printf("Dex file size: %d\n", dh->fileSize);
+		printf("\tDex file size: %d\n\n", dh->fileSize);
 		oatDexFileParse(oatdata, classes_offsets, (uchar*)dh, os.oatdata_size);
 		offset += (sizeof(uint) * dh->classDefsSize);
 	}
 	return true;
+}
+
+void printOatHeader(struct OatHeader* oheader) {
+	printf("\n\nOAT header: \n");
+	printf("\tadler32Checksum:\t0x%08x\n", oheader->adler32Checksum);
+	printf("\tdexFileCount:\t\t%d\n", oheader->dexFileCount);
+	printf("\texecutableOffset:\t0x%08x\n", oheader->executableOffset);
+	printf("\tinterpreterToInterpreterBridgeOffset:\t0x%08x\n", oheader->interpreterToInterpreterBridgeOffset);
+	printf("\tinterpreterToCompiledCodeBridgeOffset:\t0x%08x\n", oheader->interpreterToCompiledCodeBridgeOffset);
+	printf("\tjniDlsymLookupOffset:\t\t\t0x%08x\n", oheader->jniDlsymLookupOffset);
+	printf("\tquickGenericJniTrampolineOffset:\t0x%08x\n", oheader->quickGenericJniTrampolineOffset);
+	printf("\tquickImtConflictTrampolineOffset:\t0x%08x\n", oheader->quickImtConflictTrampolineOffset);
+	printf("\tquickResolutionTrampolineOffset:\t0x%08x\n", oheader->quickResolutionTrampolineOffset);
+	printf("\tquickToInterpreterBridgeOffset:\t\t0x%08x\n", oheader->quickToInterpreterBridgeOffset);
+	printf("\timageFileLocationOatDataBegin:\t\t0x%08x\n", oheader->imageFileLocationOatDataBegin);
+	printf("\n");
 }
 
 int main(int argc, char *argv[]) 
@@ -181,13 +201,15 @@ int main(int argc, char *argv[])
 	uchar *key_value_store;
 	res = OpenOat(fd);
 	getOatOffset();
-	printf("oatdata:\t 0x%08x  0x%08x\n", os.oatdata_offset, os.oatdata_size);
-	printf("oatexec:\t 0x%08x  0x%08x\n", os.oatexec_offset, os.oatexec_size);
-	printf("oatlastword:\t 0x%08x  0x%08x\n", os.oatlastword_offset, os.oatlastword_size);
+	printf("\noatdata:\t\t0x%08x  0x%08x\n", os.oatdata_offset, os.oatdata_size);
+	printf("oatexec:\t\t0x%08x  0x%08x\n", os.oatexec_offset, os.oatexec_size);
+	printf("oatlastword:\t0x%08x  0x%08x\n\n", os.oatlastword_offset, os.oatlastword_size);
+	
 	fileLength = os.oatlastword_offset+os.oatlastword_size;
-	printf("page size: %u file size: %u\n", sysconf(_SC_PAGESIZE), fileLength);
+	
 	lseek(fd, fileLength, SEEK_SET);
 	read(fd,tmp,1);
+	
 	file_begin = mmap(0, os.oatlastword_offset+os.oatlastword_size, 
 			PROT_READ, MAP_PRIVATE, fd, 0);
 	if( file_begin == MAP_FAILED ) {
@@ -199,22 +221,21 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Close error.\n");
 		exit(1);
 	}
-	printf("0x%x, 0x%x\n", file_begin, file_end);
 	oatdata = file_begin + oatdata_offset;
 	oatexec = file_begin + oatexec_offset;
 	offset = 0;
 	oh = (struct OatHeader*)oatdata;
 	offset += sizeof(struct OatHeader);
-	printf("%s\n", oh->magic);
-	if(memcmp(oh->magic, "oat\n", 4) == 0)
+	if(memcmp(oh->magic, "oat\n", 4) != 0) {
 		printf("%s\n", oh->magic);
-	else
 		return false;
+	}
 	key_value_store = oatdata + offset;
 	offset += oh->keyValueStoreSize;
 	for(i=0;i<oh->keyValueStoreSize;i++) printf("%c", key_value_store[i]);
-	//offset += oh->keyValueStoreSize;
-	printf("\ndex file count: %d\n", oh->dexFileCount);
+	//ffset += oh->keyValueStoreSize;
+	printOatHeader(oh);
+	//printf("\ndex file count: %d\n", oh->dexFileCount);
 	oatDexParse(oatdata, offset, oh->dexFileCount);
 
 	if(munmap(file_begin, os.oatlastword_offset+os.oatlastword_size) == -1) {

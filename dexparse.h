@@ -63,22 +63,32 @@ struct TypeID {
 	uint descriptorId;
 };
 
+struct DexTypeItem {
+	ushort typeId;				// index into type_ids section
+};
+
+struct DexTypeList {
+	uint size;						// size of the list, in entries
+	struct DexTypeItem list[1];	// elements of the list
+};
+
 struct ProtoID {
 	/* index into the stringID list of the short-form descriptor of this
 	 * prototype. The string must comform to the syntax for ShortyDescriptor,
 	 * defined above. and much correspond to the return type and paramethers 
 	 * of this item.
 	 */
-	uint shortyId;
+	uint shortyId; // index into string_ids array for shorty descriptor
 	/* index info the TypeIDs list for the return type of this descriptor
 	 */
-	uint returnTypeId;
+	ushort returnTypeId; // index into type_ids array for return type
+	ushort pad_; // padding = 0
 	/* offset from the start of the file to the list of parameter types of this prototype.
 	 * or 0 if this prototype has no parameters. This offset, if non-zero, should be in 
 	 * the data section, and the data threre thould be in the format specified by "type list" below.
 	 * Additionally, there should be no reference to the type void in the list;
 	 */
-	uint parametersOff;
+	uint parametersOff; // file offset to type_list for parameter types
 };
 
 bool dexFileParse(uchar* dexBuf, uint size);
